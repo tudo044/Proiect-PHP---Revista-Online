@@ -2,6 +2,11 @@
 session_start();
 require_once 'model/Database.php';
 
+// 1. GENERARE CSRF TOKEN
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
+
 if (!isset($_GET['id']) || empty($_GET['id'])) {
     die("Eroare: Știrea nu a fost găsită.");
 }
@@ -10,22 +15,29 @@ $stire_id = $_GET['id'];
 $pdo = Database::getInstance()->getConnection();
 $mesaj_comentariu = '';
 
+// --- LOGICA STERGERE COMENTARIU (ADMIN/REPORTER) ---
 if (isset($_POST['sterge_comentariu_id'])) {
     if (isset($_SESSION['user_rol']) && ($_SESSION['user_rol'] == 'admin' || $_SESSION['user_rol'] == 'reporter')) {
         try {
             $sql_del = "DELETE FROM comentarii WHERE id = :id_com";
             $stmt_del = $pdo->prepare($sql_del);
             $stmt_del->execute(['id_com' => $_POST['sterge_comentariu_id']]);
-            
             header("Location: stire-detaliu.php?id=$stire_id&msg=sters");
             exit;
         } catch (PDOException $e) {
-            $mesaj_comentariu = "<div class='alert alert-danger'>Eroare la ștergere: " . $e->getMessage() . "</div>";
+            $mesaj_comentariu = "<div class='alert alert-danger'>Eroare: " . $e->getMessage() . "</div>";
         }
     }
 }
 
+// --- LOGICA ADAUGARE COMENTARIU (CU VERIFICARE CSRF) ---
 if (isset($_POST['submit_comentariu'])) {
+    // A. Verificare CSRF
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+        die("Eroare de securitate (CSRF). Reîncarcă pagina.");
+    }
+
+    // B. Adaugare Comentariu
     if (isset($_SESSION['user_id'])) {
         try {
             $data_romania = new DateTime("now", new DateTimeZone('Europe/Bucharest'));
@@ -36,7 +48,7 @@ if (isset($_POST['submit_comentariu'])) {
             $stmt_insert = $pdo->prepare($sql_insert);
             
             $stmt_insert->execute([
-                'continut' => $_POST['comentariu_text'],
+                'continut' => $_POST['comentariu_text'], // Nota: XSS e tratat la afisare cu htmlspecialchars
                 'id_user' => $_SESSION['user_id'],
                 'id_stire' => $stire_id,
                 'data_com' => $ora_formatata
@@ -53,19 +65,20 @@ if (isset($_POST['submit_comentariu'])) {
     }
 }
 
+// --- PRELUARE DATE STIRE ---
 try {
     $sql_stire = "SELECT stiri.*, categorii.name AS nume_categorie, user.name AS nume_autor 
                   FROM stiri
                   LEFT JOIN categorii ON stiri.id_categorie = categorii.id
                   LEFT JOIN user ON stiri.id_autor = user.id
                   WHERE stiri.id = :id_stire";
-            
     $stmt_stire = $pdo->prepare($sql_stire);
     $stmt_stire->execute(['id_stire' => $stire_id]);
     $stire = $stmt_stire->fetch();
     
     if (!$stire) die("Eroare: Știrea nu există.");
 
+    // Preluare Comentarii
     $sql_com = "SELECT comentarii.*, user.name AS nume_comentator
                 FROM comentarii
                 JOIN user ON comentarii.id_user = user.id
@@ -147,6 +160,8 @@ if (isset($_GET['msg']) && $_GET['msg'] == 'sters') {
                 <div class="card-body">
                     <?php if (isset($_SESSION['user_id'])): ?>
                         <form action="stire-detaliu.php?id=<?php echo $stire_id; ?>" method="POST">
+                            <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+                            
                             <div class="mb-2">
                                 <textarea class="form-control" name="comentariu_text" rows="3" placeholder="Scrie părerea ta..." required></textarea>
                             </div>
@@ -175,13 +190,11 @@ if (isset($_GET['msg']) && $_GET['msg'] == 'sters') {
                                 </form>
                             <?php endif; ?>
                         </div>
-                        
                         <p class="card-text mt-2"><?php echo nl2br(htmlspecialchars($com['continut'])); ?></p>
                     </div>
                 </div>
             <?php endforeach; ?>
         </div>
-
     </div>
 </body>
 </html>

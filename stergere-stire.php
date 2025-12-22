@@ -1,34 +1,40 @@
 <?php
-
 session_start();
 require_once 'model/Database.php';
 
-
-if (!isset($_GET['id']) || empty($_GET['id'])) {
-    die("Eroare: ID-ul știrii lipsește.");
+// 1. Verificare Autentificare
+if (!isset($_SESSION['user_id'])) {
+    die("⛔ Acces interzis! Trebuie să fii autentificat.");
 }
 
-$stire_id = $_GET['id'];
-$pdo = Database::getInstance()->getConnection();
+// 2. VERIFICARE ROLURI 
+// Doar 'admin' are voie sa stearga stiri. 
+if ($_SESSION['user_rol'] !== 'admin') {
+    die("⛔ ACCES INTERZIS! Doar administratorii pot șterge știri.");
+}
 
-try {
-   
-    if (!isset($_SESSION['user_rol']) || $_SESSION['user_rol'] != 'admin') {
-        die("Acces interzis! Nu aveți permisiunea să ștergeți această știre.");
-    }
-
- 
-    $sql = "DELETE FROM stiri WHERE id = :id";
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute(['id' => $stire_id]);
-
+if (isset($_GET['id'])) {
+    $id = $_GET['id'];
     
-    header("Location: index.php?status=sters_succes");
+    try {
+        $pdo = Database::getInstance()->getConnection();
+        
+        // Mai intai stergem comentariile asociate stirii (Foreign Key constraint)
+        $stmt_com = $pdo->prepare("DELETE FROM comentarii WHERE id_stire = :id");
+        $stmt_com->execute(['id' => $id]);
+
+        // Apoi stergem stirea
+        $stmt = $pdo->prepare("DELETE FROM stiri WHERE id = :id");
+        $stmt->execute(['id' => $id]);
+        
+        // Redirectionare
+        header("Location: index.php");
+        exit;
+    } catch (PDOException $e) {
+        die("Eroare la ștergere: " . $e->getMessage());
+    }
+} else {
+    header("Location: index.php");
     exit;
-
-} catch (PDOException $e) {
-    die("Eroare la ștergerea știrii: " . $e->getMessage());
 }
-
 ?>
-
